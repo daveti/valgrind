@@ -3689,6 +3689,73 @@ void amd64g_dirtyhelper_SxDT ( void *address, ULong op ) {
 #  endif
 }
 
+/* Dirty helper for rdrand instruction */
+ULong amd64g_dirtyhelper_rdrand ( ULong sz/*4,8*/ ) {
+#  if defined(__x86_64__)
+   ULong res = 0;
+   UInt res32 = 0;
+
+   if ((sz != 4) && (sz != 8))
+      vpanic("amd64g_dirtyhelper_rdrand: invalid sz");
+
+   if (sz == 4)
+      __asm__ __volatile__("1: rdrand %%eax\n\t"
+                           "jnc 1b\n\t"
+                           "movl %%eax, %0\n\t"
+                           : "=r"(res32)
+                           :
+                           : "eax");
+   else
+      __asm__ __volatile__("1: rdrand %%rax\n\t"
+                           "jnc 1b\n\t"
+                           "movq %%rax, %0\n\t"
+                           : "=r"(res)
+                           :
+                           : "rax");
+
+   if (sz == 4)
+      res = (ULong)res32;
+
+   return res;
+#  else
+   return 0;
+#  endif
+}
+
+/* Dirty helper for rdseed instruction */
+ULong amd64g_dirtyhelper_rdseed ( ULong sz/*4,8*/ ) {
+#  if defined(__x86_64__)
+   ULong res = 0;
+   UInt res32 = 0;
+
+   if ((sz != 4) && (sz != 8))
+      vpanic("amd64g_dirtyhelper_rdseed: invalid sz");
+
+   if (sz == 4)
+      __asm__ __volatile__("1: rdseed %%eax\n\t"
+                           "jnc 1b\n\t"
+                           "movl %%eax, %0\n\t"
+                           : "=r"(res32)
+                           :
+                           : "eax");
+   else
+      __asm__ __volatile__("1: rdseed %%rax\n\t"
+                           "jnc 1b\n\t"
+                           "movq %%rax, %0\n\t"
+                           : "=r"(res)
+                           :
+                           : "rax");
+
+   if (sz == 4)
+      res = (ULong)res32;
+
+   return res;
+#  else
+   return 0;
+#  endif
+}
+
+
 /*---------------------------------------------------------------*/
 /*--- Helpers for MMX/SSE/SSE2.                               ---*/
 /*---------------------------------------------------------------*/

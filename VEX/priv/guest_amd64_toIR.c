@@ -1947,6 +1947,24 @@ void setFlags_MUL ( IRType ty, IRTemp arg1, IRTemp arg2, ULong base_op )
 }
 
 
+/* Set the carry flag (initially for rdrand/rdseed) */
+static
+void setCarryFlag ( void )
+{
+   IRTemp  oldflags  = newTemp(Ity_I64);
+   IRTemp  newflags  = newTemp(Ity_I64);
+
+   assign( oldflags, mk_amd64g_calculate_rflags_all() );
+   assign( newflags, binop(Iop_Or64, mkexpr(oldflags), mkU64(1<<AMD64G_CC_SHIFT_C)));
+
+   /* Abuse the copy opc */
+   stmt( IRStmt_Put( OFFB_CC_OP,   mkU64(AMD64G_CC_OP_COPY)) );
+   stmt( IRStmt_Put( OFFB_CC_DEP1, mkexpr(newflags)) );
+   stmt( IRStmt_Put( OFFB_CC_DEP2, mkU64(0)) );
+   stmt( IRStmt_Put( OFFB_CC_NDEP, mkU64(0)) );
+}
+
+
 /* -------------- Condition codes. -------------- */
 
 /* Condition codes, using the AMD encoding.  */
@@ -22376,6 +22394,61 @@ Long dis_ESC_0F (
    }
 
    case 0xC7: { /* CMPXCHG8B Ev, CMPXCHG16B Ev */
+      /* Unfortunately, this could also be rdrand/rdseed */
+      modrm = getUChar(delta);
+      if (((modrm>>6) & 0x3) == 0x3) {
+         /* rdrand/rdseed */
+         ULong size = (pfx & PFX_REXW) ? 8 : 4;
+         UInt reg = (modrm & 0x3);
+         IRTemp val = newTemp(Ity_I64);
+         IRExpr **args = mkIRExprVec_1(mkU64(size));
+         IRDirty *d = NULL;
+
+         if ((((modrm>>3) & 0x7) == 0x6) && (archinfo->hwcaps & VEX_HWCAPS_AMD64_RDRAND)) {
+            /* Handle rdrand */
+            d = unsafeIRDirty_1_N (val,
+                                   0,
+                                   "amd64g_dirtyhelper_rdrand",
+                                   &amd64g_dirtyhelper_rdrand,
+                                   args);
+            stmt( IRStmt_Dirty(d) );
+
+            /* Update the guest reg */
+            if (size == 4)
+               putIReg32(reg, unop(Iop_64to32, mkexpr(val)));
+            else
+               putIReg64(reg, mkexpr(val));
+
+            /* Update the guest carry flag */
+            setCarryFlag();
+            DIP("rdrand\n");
+         }
+         else if ((((modrm>>3) & 0x7) == 0x7) && (archinfo->hwcaps & VEX_HWCAPS_AMD64_RDSEED)) {
+            /* Handle rdseed */
+            d = unsafeIRDirty_1_N (val,
+                                   0,
+                                   "amd64g_dirtyhelper_rdseed",
+                                   &amd64g_dirtyhelper_rdseed,
+                                   args);
+            stmt( IRStmt_Dirty(d) );
+
+            /* Update the guest reg */
+            if (size == 4)
+               putIReg32(reg, unop(Iop_64to32, mkexpr(val)));
+            else
+               putIReg64(reg, mkexpr(val));
+
+            /* Update the guest carry flag */
+            setCarryFlag();
+            DIP("rdseed\n");
+         } else
+            goto decode_failure;
+
+         delta++;
+         return delta;
+      }
+
+      /* CMPXCHG */
       IRType  elemTy     = sz==4 ? Ity_I32 : Ity_I64;
       IRTemp  expdHi     = newTemp(elemTy);
       IRTemp  expdLo     = newTemp(elemTy);
@@ -22404,7 +22477,6 @@ Long dis_ESC_0F (
       if (sz != 4 && sz != 8) goto decode_failure;
       if (sz == 8 && !(archinfo->hwcaps & VEX_HWCAPS_AMD64_CX16))
          goto decode_failure;
-      modrm = getUChar(delta);
       if (epartIsReg(modrm)) goto decode_failure;
       if (gregLO3ofRM(modrm) != 1) goto decode_failure;
       if (haveF2orF3(pfx)) {

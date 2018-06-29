@@ -192,6 +192,10 @@ extern void  amd64g_dirtyhelper_OUT ( ULong portno, ULong data,
 extern void amd64g_dirtyhelper_SxDT ( void* address,
                                       ULong op /* 0 or 1 */ );
 
+extern ULong amd64g_dirtyhelper_rdrand ( ULong sz/*4,8*/ );
+extern ULong amd64g_dirtyhelper_rdseed ( ULong sz/*4,8*/ );
+
+
 /* Helps with PCMP{I,E}STR{I,M}.
 
    CALLED FROM GENERATED CODE: DIRTY HELPER(s).  (But not really,

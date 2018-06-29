@@ -946,6 +946,7 @@ Bool VG_(machine_get_hwcaps)( void )
    { Bool have_sse3, have_cx8, have_cx16;
      Bool have_lzcnt, have_avx, have_bmi, have_avx2;
      Bool have_rdtscp;
+     Bool have_rdrand, have_rdseed;
      UInt eax, ebx, ecx, edx, max_basic, max_extended;
      ULong xgetbv_0 = 0;
      HChar vstr[13];
@@ -1051,6 +1052,13 @@ Bool VG_(machine_get_hwcaps)( void )
         have_avx2 = (ebx & (1<<5)) != 0; /* True => have AVX2 */
      }
 
+     /* Check for rdrand */
+     VG_(cpuid)(0x01, 0, &eax, &ebx, &ecx, &edx);
+     have_rdrand = (ecx & (1<<30)) != 0;
+     /* Check for rdseed */
+     VG_(cpuid)(0x07, 0, &eax, &ebx, &ecx, &edx);
+     have_rdseed = (ebx & (1<<18)) != 0;
+
      va          = VexArchAMD64;
      vai.endness = VexEndnessLE;
      vai.hwcaps  = (have_sse3   ? VEX_HWCAPS_AMD64_SSE3   : 0)
@@ -1059,7 +1067,9 @@ Bool VG_(machine_get_hwcaps)( void )
                  | (have_avx    ? VEX_HWCAPS_AMD64_AVX    : 0)
                  | (have_bmi    ? VEX_HWCAPS_AMD64_BMI    : 0)
                  | (have_avx2   ? VEX_HWCAPS_AMD64_AVX2   : 0)
-                 | (have_rdtscp ? VEX_HWCAPS_AMD64_RDTSCP : 0);
+                 | (have_rdtscp ? VEX_HWCAPS_AMD64_RDTSCP : 0)
+                 | (have_rdrand ? VEX_HWCAPS_AMD64_RDRAND : 0)
+                 | (have_rdseed ? VEX_HWCAPS_AMD64_RDSEED : 0);
 
      VG_(machine_get_cache_info)(&vai);
 
