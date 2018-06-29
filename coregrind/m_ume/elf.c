@@ -589,6 +589,12 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
       ESZ(Addr) hacky_load_address = 0x100000 + 8 * VKI_PAGE_SIZE;
       if (ebase < hacky_load_address)
          ebase = hacky_load_address;
+      /* daveti: NOTE: for Zircon, we need to map enclaveos_runner
+         into high memory since the low memory will be reserved
+         for the enclave (e.g., lowest 256MB).
+         TODO: make it a parameter to configure this value from cmdline
+       */
+      ebase = 0x700000000000;
 #     endif
 
 #     if defined(VGO_solaris)
