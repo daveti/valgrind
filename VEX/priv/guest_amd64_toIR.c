@@ -468,6 +468,10 @@ static void unimplemented ( const HChar* str )
 #define R_R14 14
 #define R_R15 15
 
+/* This is NOT standard encoding -- FG/GS base */
+#define R_FSBASE 16
+#define R_GSBASE 17
+
 /* This is the Intel register encoding -- segment regs. */
 #define R_ES 0
 #define R_CS 1
@@ -899,6 +903,8 @@ static Int integerGuestReg64Offset ( UInt reg )
       case R_R13: return OFFB_R13;
       case R_R14: return OFFB_R14;
       case R_R15: return OFFB_R15;
+      case R_FSBASE: return OFFB_FS_CONST;
+      case R_GSBASE: return OFFB_GS_CONST;
       default: vpanic("integerGuestReg64Offset(amd64)");
    }
 }
@@ -2396,25 +2402,20 @@ IRExpr* handleAddrOverrides ( const VexAbiInfo* vbi,
       that %fs or %gs are constant.
       Typically, %fs is always 0x63 on linux (in the main thread, it
       stays at value 0), %gs always 0x60 on Darwin, ... */
+   /* daveti: to support fsgsbase instructions, we reuse the
+      guest_fs_const and guest_gs_const as fsbase and gsbase,
+      and allow them to be updated no matter what. */
    /* --- segment overrides --- */
    if (pfx & PFX_FS) {
-      if (vbi->guest_amd64_assume_fs_is_const) {
-         /* return virtual + guest_FS_CONST. */
-         virtual = binop(Iop_Add64, virtual,
-                                    IRExpr_Get(OFFB_FS_CONST, Ity_I64));
-      } else {
-         unimplemented("amd64 %fs segment override");
-      }
+       /* return virtual + guest_FS_CONST. */
+       virtual = binop(Iop_Add64, virtual,
+                       IRExpr_Get(OFFB_FS_CONST, Ity_I64));
    }
 
    if (pfx & PFX_GS) {
-      if (vbi->guest_amd64_assume_gs_is_const) {
-         /* return virtual + guest_GS_CONST. */
-         virtual = binop(Iop_Add64, virtual,
-                                    IRExpr_Get(OFFB_GS_CONST, Ity_I64));
-      } else {
-         unimplemented("amd64 %gs segment override");
-      }
+       /* return virtual + guest_GS_CONST. */
+       virtual = binop(Iop_Add64, virtual,
+                       IRExpr_Get(OFFB_GS_CONST, Ity_I64));
    }
 
    /* cs, ds, es and ss are simply ignored in 64-bit mode. */
@@ -22179,6 +22180,78 @@ Long dis_ESC_0F (
                  "%cl", False /* right */);
       return delta;
 
+   case 0xAE: { /* fsgsbase */
+      if (pfx & PFX_F3) {
+         /* Because fsgsbase is totally emulated by the host,
+            we do not need the hwcap on the host to support
+            this instruction. */
+         modrm = getUChar(delta);
+         /* modrm: bits 7,6: 11B
+                   bits 5,4,3: rd/wr, fs/gs
+                   bits 2,1,0: GPR */
+         if (((modrm>>6) & 0x3) != 0x3) {
+            vex_printf("vex error: invalid mod bits for fsgsbase instruction encoding\n");
+            goto decode_failure;
+         }
+
+         ULong op = (ULong)((modrm>>3) & 0x7);
+         UInt reg = (modrm & 0x7);
+         ULong size = (pfx & PFX_REXW) ? 8 : 4;
+         IRType ty = szToITy(size);
+         IRTemp src = newTemp(ty);
+
+         if (op > 0x1) {
+            /* Get the val from the src reg for fsgsbase write */
+            if (size == 4)
+               assign(src, getIReg32(reg));
+            else
+               assign(src, getIReg64(reg));
+
+            /* Write fsgsbase */
+            if (op == 0x2) {
+               /* wrfsbase */
+               if (size == 4)
+                  putIReg32(R_FSBASE, mkexpr(src));
+               else
+                  putIReg64(R_FSBASE, mkexpr(src));
+            } else {
+               /* wrgsbase */
+               if (size == 4)
+                  putIReg32(R_GSBASE, mkexpr(src));
+               else
+                  putIReg64(R_GSBASE, mkexpr(src));
+            }
+         } else {
+            /* Read fsgsbase */
+            if (op == 0x0) {
+               /* rdfsbase */
+               if (size == 4)
+                  assign(src, getIReg32(R_FSBASE));
+               else
+                  assign(src, getIReg64(R_FSBASE));
+            } else {
+               /* rdgsbase */
+               if (size == 4)
+                  assign(src, getIReg32(R_GSBASE));
+               else
+                  assign(src, getIReg64(R_GSBASE));
+            }
+
+            /* Update target reg for fsgsbase read */
+            if (size == 4)
+               putIReg32(reg, mkexpr(src));
+            else
+               putIReg64(reg, mkexpr(src));
+         }
+
+         DIP("fsgsbase\n");
+         delta++;
+         return delta;
+      }
+
+      break;
+   }
+
    case 0xAF: /* IMUL Ev, Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_mul_E_G ( vbi, pfx, sz, delta );
@@ -32232,15 +32305,6 @@ DisResult disInstr_AMD64_WRK (
    if (pfx & PFX_SS) n++;
    if (n > 1) 
       goto decode_failure; /* multiple seg overrides == illegal */
-
-   /* We have a %fs prefix.  Reject it if there's no evidence in 'vbi'
-      that we should accept it. */
-   if ((pfx & PFX_FS) && !vbi->guest_amd64_assume_fs_is_const)
-      goto decode_failure;
-
-   /* Ditto for %gs prefixes. */
-   if ((pfx & PFX_GS) && !vbi->guest_amd64_assume_gs_is_const)
-      goto decode_failure;
 
    /* Set up sz. */
    sz = 4;
