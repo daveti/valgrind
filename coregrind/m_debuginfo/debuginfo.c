@@ -1608,6 +1608,134 @@ void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
    if (pdbname) ML_(dinfo_free)(pdbname);
 }
 
+
+/* The original motivation for this function is to let valgrind support
+ * gdb command add-symbol-file. Since valgrind relies on hooking mmap
+ * to find the loaded binary and trigger the loading of its debugging info,
+ * when this binary is not directly mmap'd (e.g., memcpy'd from other VAs),
+ * valgrind could not know what exactly happens at those address, thus
+ * returns ??? in the backtrace. As expected, this function is used to
+ * solve this issue.
+ * NOTE: we could not rely on segment to provide the VA mapping info.
+ * Instead, we ask the client program to provide the loding address
+ * and the mapped size.
+ * Ref: di_notify_mmap()
+ */
+ULong VG_(di_notify_add_symbol_file)( HChar *filename, Addr a, ULong len) 
+{
+   DebugInfo* di;
+   Int        actual_fd, oflags;
+   SysRes     preadres;
+   HChar      buf1k[1024];
+   Bool       debug = (DEBUG_FSM != 0);
+   SysRes     statres;
+   struct vg_stat statbuf;
+
+   if (debug)
+      VG_(printf)("di_notify_add_symbol_file-0: filename %s, Addr %#lx, len %#lx\n",
+                  filename, a, len);
+
+   /* Only try to read debug information from regular files.  */
+   statres = VG_(stat)(filename, &statbuf);
+
+   /* stat dereferences symlinks, so we don't expect it to succeed and
+      yet produce something that is a symlink. */
+   vg_assert(sr_isError(statres) || ! VKI_S_ISLNK(statbuf.mode));
+
+   /* Finally, the point of all this stattery: if it's not a regular file,
+      don't try to read debug info from it. */
+   if (! VKI_S_ISREG(statbuf.mode))
+      return 0;
+
+   /* no uses of statbuf below here. */
+
+   /* Peer at the first few bytes of the file, to see if it is an ELF */
+   /* object file. Ignore the file if we do not have read permission. */
+   VG_(memset)(buf1k, 0, sizeof(buf1k));
+   oflags = VKI_O_RDONLY;
+#  if defined(VKI_O_LARGEFILE)
+   oflags |= VKI_O_LARGEFILE;
+#  endif
+
+   SysRes fd = VG_(open)( filename, oflags, 0 );
+   if (sr_isError(fd)) {
+      if (sr_Err(fd) != VKI_EACCES) {
+         DebugInfo fake_di;
+         VG_(memset)(&fake_di, 0, sizeof(fake_di));
+         fake_di.fsm.filename = ML_(dinfo_strdup)("di.debuginfo.nmm", filename);
+         ML_(symerr)(&fake_di, True,
+            "can't open file to inspect ELF header");
+      }
+      return 0;
+   }
+   actual_fd = sr_Res(fd);
+
+   preadres = VG_(pread)( actual_fd, buf1k, sizeof(buf1k), 0 );
+   VG_(close)( actual_fd );
+
+   if (sr_isError(preadres)) {
+      DebugInfo fake_di;
+      VG_(memset)(&fake_di, 0, sizeof(fake_di));
+      fake_di.fsm.filename = ML_(dinfo_strdup)("di.debuginfo.nmm", filename);
+      ML_(symerr)(&fake_di, True, "can't read file to inspect ELF header");
+      return 0;
+   }
+   if (sr_Res(preadres) == 0)
+      return 0;
+   vg_assert(sr_Res(preadres) > 0 && sr_Res(preadres) <= sizeof(buf1k) );
+
+   /* We're only interested in mappings of object files. */
+#  if defined(VGO_linux) || defined(VGO_solaris)
+   if (!ML_(is_elf_object_file)( buf1k, (SizeT)sr_Res(preadres), False ))
+      return 0;
+#  elif defined(VGO_darwin)
+   if (!ML_(is_macho_object_file)( buf1k, (SizeT)sr_Res(preadres) ))
+      return 0;
+#  else
+#    error "unknown OS"
+#  endif
+
+   /* See if we have a DebugInfo for this filename.  If not,
+      create one. */
+   di = find_or_create_DebugInfo_for( filename );
+   vg_assert(di);
+
+   if (debug)
+      VG_(printf)("di_notify_add_symbol_file-1: "
+                  "noting details in DebugInfo* at %p\n", di);
+
+   /* Note the details about the mapping. */
+   DebugInfoMapping map;
+   map.avma = a;
+   map.size = len;
+   map.foff = 0x0;
+   map.rx   = True;
+   map.rw   = True;
+   map.ro   = False;
+   VG_(addToXA)(di->fsm.maps, &map);
+
+   /* Update flags about what kind of mappings we've already seen. */
+   di->fsm.have_rx_map |= True;
+   di->fsm.have_rw_map |= True;
+   di->fsm.have_ro_map |= False;
+
+   /* So, finally, are we in an accept state? */
+   if (!di->have_dinfo) {
+      /* Ok, so, finally, we found what we need, and we haven't
+         already read debuginfo for this object.  So let's do so now.
+         Yee-ha! */
+      if (debug)
+         VG_(printf)("di_notify_add_symbol_file-2: "
+                     "achieved accept state for %s\n", filename);
+      return di_notify_ACHIEVE_ACCEPT_STATE ( di );
+   } else {
+      /* If we don't have an rx and rw mapping, or if we already have
+         debuginfo for this mapping for whatever reason, go no
+         further. */
+      return 0;
+   }
+}
+
 #endif /* defined(VGO_linux) || defined(VGO_darwin) || defined(VGO_solaris) */
 
 

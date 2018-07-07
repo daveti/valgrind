@@ -2158,6 +2158,13 @@ void do_client_request ( ThreadId tid )
          LibVEX_InitIRI ( (IRICB *)arg[1] );
          break;
 
+      case VG_USERREQ__ADD_SYMBOL_FILE: {
+         ULong ret;
+         ret = VG_(di_notify_add_symbol_file)( (HChar*)arg[1], arg[2], arg[3] );
+         SET_CLREQ_RETVAL( tid, ret );
+         break;
+      }
+
       default:
        my_default:
 	 if (os_client_request(tid, arg)) {

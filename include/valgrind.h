@@ -6198,7 +6198,10 @@ typedef
           VG_USERREQ__VEX_INIT_FOR_IRI = 0x1901,
           /* Used by Inner Valgrind to inform Outer Valgrind where to
              find the list of inner guest threads */
-          VG_USERREQ__INNER_THREADS    = 0x1902
+          VG_USERREQ__INNER_THREADS    = 0x1902,
+
+          /* Support for gdb-like add-symbol-file */
+          VG_USERREQ__ADD_SYMBOL_FILE  = 0x1a01
    } Vg_ClientRequest;
 
 #if !defined(__GNUC__)
@@ -6626,6 +6629,14 @@ VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
 #define VALGRIND_MONITOR_COMMAND(command)                               \
    VALGRIND_DO_CLIENT_REQUEST_EXPR(0, VG_USERREQ__GDB_MONITOR_COMMAND, \
                                    command, 0, 0, 0, 0)
+
+/* add-symbol-file from the client program.
+   fn: filename (a shared object file path)
+   addr: loading address (mmap starting address)
+   len: mapping length */
+#define VALGRIND_ADD_SYMBOL_FILE(fn, addr, len)                  \
+   VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__ADD_SYMBOL_FILE,  \
+                                   fn, addr, len, 0, 0)
 
 
 #undef PLAT_x86_darwin

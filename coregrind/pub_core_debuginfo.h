@@ -76,6 +76,8 @@ extern void VG_(di_notify_pdb_debuginfo)( Int fd, Addr avma,
 
 /* this should also really return ULong */
 extern void VG_(di_notify_vm_protect)( Addr a, SizeT len, UInt prot );
+
+extern ULong VG_(di_notify_add_symbol_file)( HChar *filename, Addr a, ULong len );
 #endif
 
 extern void VG_(di_discard_ALL_debuginfo)( void );
